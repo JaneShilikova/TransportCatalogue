@@ -32,17 +32,6 @@ namespace transport_catalogue {
         struct Stop {
             std::string name;
             geo::Coordinates coordinates;
-            std::unordered_map<std::pair<const Stop*, const Stop*>, uint64_t, detail::StopHasher<Stop>> di_to_stop;
-
-            Stop(std::string name = "", double latitude = 0.0, double longitude = 0.0,
-                std::unordered_map<std::pair<const Stop*, const Stop*>, uint64_t, detail::StopHasher<Stop>> di_to_stop = {}) :
-                name(std::move(name)),
-                coordinates({latitude, longitude}),
-                di_to_stop(di_to_stop) { }
-
-            Stop(Stop&& other) noexcept : name(other.name),
-                coordinates(other.coordinates),
-                di_to_stop(other.di_to_stop) { }
         };
     }//namespace stop
 
@@ -82,5 +71,6 @@ namespace transport_catalogue {
     private:
         std::deque<bus::Bus> buses_;
         std::deque<stop::Stop> stops_;
+        std::unordered_map<std::pair<const stop::Stop*, const stop::Stop*>, uint64_t, detail::StopHasher<stop::Stop>> di_to_stop;
     };
 }//namespace transport_catalogue

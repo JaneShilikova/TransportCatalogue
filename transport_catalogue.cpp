@@ -7,10 +7,7 @@ using namespace std;
 
 namespace transport_catalogue {
     void TransportCatalogue::AddStop(string_view name, double latitude, double longitude) {
-        stop::Stop stop;
-        stop.name = { name.begin(), name.end() };
-        stop.coordinates = {latitude, longitude};
-        stops_.push_back(move(stop));
+        stops_.push_back({{ name.begin(), name.end() }, latitude, longitude});
     }
 
     void TransportCatalogue::AddRoute(string_view number, char type, std::vector<std::string> stops) {
@@ -19,11 +16,9 @@ namespace transport_catalogue {
         if (type == '-') result.route_type = RouteType::Direct;
         if (type == '>') result.route_type = RouteType::Round;
         for (auto& stop : stops) {
-            for (auto& elem : stops_) {
-                if (elem.name.compare(stop) == 0) {
-                    result.route.push_back(&elem);
-                    break;
-                }
+            auto found_stop = GetStop(stop);
+            if (found_stop != nullptr) {
+                result.route.push_back(found_stop);
             }
         }
         if (result.route_type == RouteType::Direct) {
@@ -51,25 +46,27 @@ namespace transport_catalogue {
 
     const bus::Bus* TransportCatalogue::GetRoute(string_view name) {
         for (auto& elem : buses_) {
-            if (elem.number.compare({name.begin(), name.end()}) == 0) {
+            string name_str = {name.begin(), name.end()};
+            if (elem.number.compare(name_str) == 0) {
                 return &elem;
             }
         }
-        return {};
+        return nullptr;
     }
 
     const stop::Stop* TransportCatalogue::GetStop(string_view name) {
         for (auto& elem : stops_) {
-            if (elem.name.compare({name.begin(), name.end()}) == 0) {
+            string name_str = {name.begin(), name.end()};
+            if (elem.name.compare(name_str) == 0) {
                 return &elem;
             }
         }
-        return {};
+        return nullptr;
     }
 
     void TransportCatalogue::RouteAbout(string_view name) {
         const bus::Bus* bus = GetRoute(name);
-        if (bus->number_of_stops == 0) {
+        if (bus == nullptr) {
             output::OutputRouteAbout(name);
         }
         else {
@@ -94,24 +91,18 @@ namespace transport_catalogue {
     void TransportCatalogue::StopAbout(string_view stop) {
         set<string_view> buses = GetBuses(stop);
         bool flag = true;
-        if (GetStop(stop)->name == "") {
+        auto found_stop = GetStop(stop);
+        if (found_stop == nullptr) {
             flag = false;
         }
         output::OutputStopAbout(stop, buses, flag);
     }
 
     void TransportCatalogue::SetStopDistance(std::string_view stop1, uint64_t dist, std::string_view stop2) {
-        for (auto& stop : stops_) {
-            string stop1_str = {stop1.begin(), stop1.end()};
-            if (stop.name == stop1_str) {
-                for (auto& another_stop : stops_) {
-                    string stop2_str = {stop2.begin(), stop2.end()};
-                    if (another_stop.name == stop2_str) {
-                        stop.di_to_stop.insert({{&stop, &another_stop}, dist});
-                        return;
-                    }
-                }
-            }
+        auto p_stop1 = GetStop(stop1);
+        auto p_stop2 = GetStop(stop2);
+        if (p_stop1 != nullptr && p_stop2 != nullptr) {
+            di_to_stop[{p_stop1, p_stop2}] = dist;
         }
     }
 
@@ -119,13 +110,13 @@ namespace transport_catalogue {
         auto p_stop1 = GetStop(stop1);
         auto p_stop2 = GetStop(stop2);
         if (p_stop1 != nullptr && p_stop2 != nullptr) {
-            if (p_stop1->di_to_stop.count( {p_stop1, p_stop2} )) {
-                return p_stop1->di_to_stop.at( {p_stop1, p_stop2} );
+            if (di_to_stop.count( {p_stop1, p_stop2} )) {
+                return di_to_stop.at( {p_stop1, p_stop2} );
             }
             else
             {
-                if (p_stop2->di_to_stop.count( {p_stop2, p_stop1 } )) {
-                    return p_stop2->di_to_stop.at( {p_stop2, p_stop1} );
+                if (di_to_stop.count( {p_stop2, p_stop1 } )) {
+                    return di_to_stop.at( {p_stop2, p_stop1} );
                 }
             }
         }
