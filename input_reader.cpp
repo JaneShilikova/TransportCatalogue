@@ -1,131 +1,271 @@
 #include "input_reader.h"
+#include "stat_reader.h"
 
+#include <algorithm>
 #include <unordered_map>
 
 using namespace std;
 
 namespace transport_catalogue {
-    namespace query {
 
-        std::istream& operator>>(std::istream& is, Query& q) {
-            static std::unordered_map<std::string, QueryType> const table = {
-                {"Stop", QueryType::StopX}, {"Bus", QueryType::BusX}
-            };
-            std::string type;
-            is >> type;
+namespace query {
 
-            switch (table.at(type)) {
-                case QueryType::StopX: {
-                    q.type = QueryType::StopX;
-                    std::string s;
-                    getline(is, s);
-                    size_t position = s.find(":");
+inline std::vector<std::string_view> Split(std::string_view str, char delim) {
+    std::vector<std::string_view> result;
+    int64_t pos = 0;
+    const int64_t pos_end = str.npos;
 
-                    if (position == std::string::npos) {
-                        for (size_t i = 1; i < s.size(); ++i) {
-                            q.stop += s[i];
-                        }
-                        break;
-                    }
+    while (true) {
+        int64_t delimiter = str.find(delim, pos);
+        result.push_back(delimiter == pos_end ? str.substr(pos) : str.substr(pos, delimiter - pos));
 
-                    for (size_t i = 1; i < position; ++i) {
-                        q.stop += s[i];
-                    }
-
-                    position += 2;
-                    auto t = position;
-                    position = s.find(",");
-
-                    for (size_t i = t; i < position; ++i) {
-                        q.lat += s[i];
-                    }
-
-                    size_t comma = s.find(",", position + 1);
-
-                    if (comma != std::string::npos) {
-                        for (size_t i = position + 1; i < comma; ++i) {
-                            q.lon += s[i];
-                        }
-
-                        while (comma < s.size()) {
-                            auto temp = comma;
-                            comma = s.find(",", comma + 1);
-                            size_t m_pos = s.find("m", temp);
-                            string number, str_stop;
-
-                            for (size_t i = temp + 2; i < m_pos; ++i) {
-                                number += s[i];
-                            }
-
-                            m_pos += 4;
-
-                            if (comma != std::string::npos) {
-                                for (size_t i = m_pos + 1; i < comma; ++i) {
-                                    str_stop += s[i];
-                                }
-                            }
-                            else {
-                                for (size_t i = m_pos + 1; i < s.size(); ++i) {
-                                    str_stop += s[i];
-                                }
-                            }
-
-                            q.di_to_stop[str_stop] = stoll(number);
-                        }
-                    }
-                    else {
-                        for (size_t i = position + 1; i < s.size(); ++i) {
-                            q.lon += s[i];
-                        }
-                    }
-                    q.latitude = stod(q.lat);
-                    q.longitude = stod(q.lon);
-                }
-                    break;
-                case QueryType::BusX: {
-                    q.type = QueryType::BusX;
-                    std::string str;
-                    getline(is, str);
-                    size_t pos = str.find(":");
-
-                    if (pos == std::string::npos) {
-                        for (size_t i = 1; i < str.size(); ++i) {
-                            q.bus += str[i];
-                        }
-                        break;
-                    }
-
-                    for (size_t i = 1; i < pos; ++i) {
-                        q.bus += str[i];
-                    }
-
-                    while (pos < str.size()) {
-                        auto temp = pos + 2;
-                        size_t found = str.find('-');
-
-                        if (found != std::string::npos) {
-                            q.symbol = '-';
-                        }
-
-                        found = str.find('>');
-
-                        if (found != std::string::npos) {
-                            q.symbol = '>';
-                        }
-
-                        pos = str.find(q.symbol, pos + 1);
-
-                        if (pos == std::string::npos) {
-                            q.stops.push_back({str.begin() + temp, str.end()});
-                            break;
-                        }
-
-                        q.stops.push_back({str.begin() + temp, str.begin() + pos - 1});
-                    }
-                }
-                    break;
-            }
-            return is;
+        if (delimiter == pos_end) {
+            break;
+        } else {
+            pos = delimiter + 1;
         }
-    }//namespace query
+    }
+
+    return result;
+}
+
+pair<string_view, string_view> Command::ParseCoordinates(string_view latitude, string_view longitude) {
+    while (longitude.front() == ' ') {
+        longitude.remove_prefix(1);
+    }
+
+    while (latitude.front() == ' ') {
+        latitude.remove_prefix(1);
+    }
+
+    while (longitude.back() == ' ') {
+        longitude.remove_suffix(1);
+    }
+
+    while (latitude.back() == ' ') {
+        latitude.remove_suffix(1);
+    }
+
+    return make_pair(latitude, longitude);
+}
+
+vector<pair<string_view, string_view>> Command::ParseDistances(vector<string_view> vec_input) {
+    vector<pair<string_view, string_view>> result;
+    size_t i = 2;
+
+    while (i < vec_input.size()) {
+        while (vec_input[i].front() == ' ') {
+            vec_input[i].remove_prefix(1);
+        }
+
+        auto pos_m = vec_input[i].find('m');
+        string_view dist, stop;
+        dist = vec_input[i].substr(0, pos_m);
+        auto pos_t = vec_input[i].find('t');
+        pos_t += 2;
+        stop = vec_input[i].substr(pos_t, vec_input[i].length());
+
+        while (stop.front() == ' ') {
+            stop.remove_prefix(1);
+        }
+
+        while (stop.back() == ' ') {
+            stop.remove_suffix(1);
+        }
+
+        result.push_back({dist, stop});
+        ++i;
+    }
+    return result;
+}
+
+vector<string_view> Command::ParseBuses(vector<string_view> vec_input) {
+    vector<string_view> result;
+    vector<string_view> parsed_buses;
+
+    if (vec_input.size() > 3) {
+        if (desc_command.find('-') != string::npos) {
+            route_type = RouteType::Direct;
+            parsed_buses = Split(desc_command, '-');
+        }
+
+        if (desc_command.find('>') != string::npos) {
+            route_type = RouteType::Round;
+            parsed_buses = Split(desc_command, '>');
+        }
+    }
+    for (size_t i = 0; i < parsed_buses.size(); ++i) {
+        while (parsed_buses[i].front() == ' ') {
+            parsed_buses[i].remove_prefix(1);
+        }
+
+        while (parsed_buses[i].back() == ' ') {
+            parsed_buses[i].remove_suffix(1);
+        }
+
+        result.push_back(parsed_buses[i]);
+    }
+
+    return result;
+}
+
+void Command::ParseCommandString(string input) {
+    static std::unordered_map<std::string, QueryType> const table = {
+        {"Stop", QueryType::StopX}, {"Bus", QueryType::BusX}
+    };
+    origin_command = move(input);
+    auto vec_input = Split(origin_command, ' ');
+    auto pos_start = origin_command.find_first_not_of(' ');
+    auto pos_end_of_command = origin_command.find(' ', pos_start);
+    string temp_type = {origin_command.begin() + pos_start, origin_command.begin() + pos_end_of_command};
+
+    switch (table.at(temp_type)) {
+        case QueryType::StopX:
+            type = QueryType::StopX;
+            if (auto pos = origin_command.find(':'); pos != string::npos) {
+                //Stop stop1:
+                desc_command = origin_command.substr(pos + 2, origin_command.length() - pos - 1);
+                auto temp = Split(desc_command, ',');
+
+                for (size_t i = pos_end_of_command; i < pos; ++i) {
+                    name += origin_command[i];
+                }
+
+                while (name.front() == ' ') {
+                    name.erase(name.begin());
+                }
+
+                coordinates = ParseCoordinates(temp[0], temp[1]);
+
+                if (temp.size() > 2) {
+                    distances = ParseDistances(temp);
+                }
+            }
+            else {
+                //Stop stop1
+                for (size_t i = pos_end_of_command; i < origin_command.size(); ++i) {
+                    name += origin_command[i];
+                }
+
+                while (name.front() == ' ') {
+                    name.erase(name.begin());
+                }
+
+                while (name.back() == ' ') {
+                    name.erase(name.end() - 1);
+                }
+                break;
+            }
+            break;
+        case QueryType::BusX:
+            type = QueryType::BusX;
+            if (auto pos = origin_command.find(':'); pos != string::npos) {
+                desc_command = origin_command.substr(pos + 2, origin_command.length() - pos - 1);
+                //Bus bus1:
+                for (size_t i = pos_end_of_command; i < pos; ++i) {
+                    name += origin_command[i];
+                }
+
+                while (name.front() == ' ') {
+                    name.erase(name.begin());
+                }
+                route = ParseBuses(vec_input);
+            }
+            else {
+                //Bus bus1
+                for (size_t i = pos_end_of_command; i < origin_command.size(); ++i) {
+                    name += origin_command[i];
+                }
+
+                while (name.front() == ' ') {
+                    name.erase(name.begin());
+                }
+
+                while (name.back() == ' ') {
+                    name.erase(name.end() - 1);
+                }
+                break;
+            }
+            break;
+    }
+}
+
+void InputReader::ParseInput() {
+    int query_count;
+    cin >> query_count;
+    cin.ignore();
+    string command;
+
+    for (int i = 0; i < query_count; ++i) {
+        getline(cin, command);
+        Command cur_command;
+        cur_command.ParseCommandString(move(command));
+        commands_.push_back(move(cur_command));
+    }
+}
+
+void InputReader::Load(TransportCatalogue& tc) {
+    //firstly with description
+    auto it_desc = partition(commands_.begin(), commands_.end(), [](Command com) {
+        return !com.desc_command.empty();
+    });
+    //firstly stop queries
+    auto it_stops = partition(commands_.begin(), it_desc, [](Command com) {
+        return com.type == QueryType::StopX;
+    });
+
+    //Stop X:
+    for (auto cur_it = commands_.begin(); cur_it != it_stops; ++cur_it) {
+        InputReader::LoadCommand(tc, *cur_it, 0);
+    }
+    //set stop distances
+    for (auto cur_it = commands_.begin(); cur_it != it_stops; ++cur_it) {
+        InputReader::LoadCommand(tc, *cur_it, 1);
+    }
+    //Bus X:
+    for (auto cur_it = it_stops; cur_it != it_desc; ++cur_it) {
+        InputReader::LoadCommand(tc, *cur_it, 0);
+    }
+    //last queries (output)
+    for (auto cur_it = it_desc; cur_it != commands_.end(); ++cur_it) {
+        InputReader::LoadCommand(tc, *cur_it, 0);
+    }
+}
+
+void InputReader::LoadCommand(TransportCatalogue& tc, Command com, bool dist) {
+    switch (com.type) {
+        case QueryType::StopX:
+            if (com.coordinates != pair<string_view, string_view>()) {
+                string lat = {com.coordinates.first.begin(), com.coordinates.first.end()};
+                string lon = {com.coordinates.second.begin(), com.coordinates.second.end()};
+
+                if (dist == false)  {
+                    tc.AddStop(com.name, stod(lat), stod(lon));
+                }
+                else {
+                    if (!com.distances.empty()) {
+                        for (auto& [dist, stop] : com.distances) {
+                            string dist_str = {dist.begin(), dist.end()};
+                            tc.SetStopDistance(com.name, stoull(dist_str), stop);
+                        }
+                    }
+                }
+            }
+            else {
+                output::OutputStopAbout(tc, com.name);
+            }
+
+            break;
+        case QueryType::BusX:
+            if (!com.route.empty()) {
+                tc.AddRoute(com.name, com.route_type, com.route);
+            }
+            else {
+                output::OutputRouteAbout(tc, com.name);
+            }
+            break;
+    }
+}
+
+}//namespace query
 }//namespace transport_catalogue

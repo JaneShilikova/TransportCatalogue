@@ -11,66 +11,74 @@
 
 namespace transport_catalogue {
 
-    enum RouteType {
-        Direct,
-        Round
-    };
+enum RouteType {
+    Direct,
+    Round
+};
 
-    namespace detail {
-        template<typename Type>
-        class StopHasher {
-        public:
-            size_t operator()(std::pair<const Type*, const Type*> stop) const {
-                return hasher_(stop.first) + 47 * hasher_(stop.second);
-            }
-        private:
-            std::hash<const Type*> hasher_;
-        };
-    }//namespace detail
+namespace detail {
 
-    namespace stop {
-        struct Stop {
-            std::string name;
-            geo::Coordinates coordinates;
-        };
-    }//namespace stop
+template<typename Type>
+class StopHasher {
+public:
+    size_t operator()(std::pair<const Type*, const Type*> stop) const {
+        return hasher_(stop.first) + 47 * hasher_(stop.second);
+    }
 
-    namespace bus {
-        struct Bus {
-            std::string number;
-            std::deque<const stop::Stop*> route;
-            RouteType route_type = RouteType::Direct;
-            double distance = 0.0;
-            uint64_t real_distance = 0;
-            std::size_t number_of_stops = 0;
-            std::size_t unique_stops = 0;
-            double curvature = 0.0;
-        };
-    }//namespace bus
+private:
+    std::hash<const Type*> hasher_;
+};
 
-    class TransportCatalogue {
-    public:
-        void AddStop(std::string_view name, double latitude, double longitude);
+}//namespace detail
 
-        void AddRoute(std::string_view number, char type, std::vector<std::string> stops);
+struct Stop {
+    std::string name;
+    geo::Coordinates coordinates;
+};
 
-        const bus::Bus* GetRoute(std::string_view name);
+using StopPtr = const Stop*;
 
-        const stop::Stop* GetStop(std::string_view name);
+struct Bus {
+    std::string number;
+    std::vector<StopPtr> stops;
+};
 
-        void RouteAbout(std::string_view name);
+using BusPtr = const Bus*;
 
-        std::set<std::string_view> GetBuses(std::string_view stop);
+struct BusStat {
+    size_t number_of_stops = 0;
+    size_t unique_stops = 0;
+    double distance = 0.;
+    uint64_t real_distance = 0;
+    double curvature = 0.;
+};
 
-        void StopAbout(std::string_view stop);
+class TransportCatalogue {
+public:
+    void AddStop(std::string_view name, double latitude, double longitude);
 
-        void SetStopDistance(std::string_view stop1, uint64_t dist, std::string_view stop2);
+    void AddRoute(std::string_view number, RouteType type, std::vector<std::string_view> stops);
 
-        uint64_t GetStopDistance(std::string_view stop1, std::string_view stop2);
+    BusPtr GetRoute(std::string_view name);
 
-    private:
-        std::deque<bus::Bus> buses_;
-        std::deque<stop::Stop> stops_;
-        std::unordered_map<std::pair<const stop::Stop*, const stop::Stop*>, uint64_t, detail::StopHasher<stop::Stop>> di_to_stop;
-    };
+    StopPtr GetStop(std::string_view name);
+
+    std::set<std::string_view> GetBuses(std::string_view stop);
+
+    void SetStopDistance(std::string_view stop1, uint64_t dist, std::string_view stop2);
+
+    uint64_t GetStopDistance(StopPtr stop1, StopPtr stop2);
+
+    BusStat GetStatistics(BusPtr bus);
+
+private:
+    std::deque<Bus> buses_;
+    std::deque<Stop> stops_;
+
+    std::unordered_map<std::string_view, BusPtr> bus_by_name_;
+    std::unordered_map<std::string_view, StopPtr> stop_by_name_;
+    std::unordered_map<StopPtr, std::set<std::string_view>> bus_by_stop_;
+    std::unordered_map<std::pair<StopPtr, StopPtr>, uint64_t, detail::StopHasher<Stop>> di_to_stop;
+};
+
 }//namespace transport_catalogue
